@@ -1,22 +1,34 @@
-from pgmpy.models import BayesianModel
+from pgmpy.models import BayesianNetwork
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 import numpy as np
 import pandas as pd
 
 
-class BayesNetHelper():
+class BayesNetHelper:
 
     @staticmethod
-    def join(reference_bayes, second_bayes, new_dependent_vars,
-             new_independent_vars, ref_num_of_records, second_num_of_records):
-        final_bayes = BayesianModel()
-        #all independent variables should stay the same
+    def join(
+        reference_bayes,
+        second_bayes,
+        new_dependent_vars,
+        new_independent_vars,
+        ref_num_of_records,
+        second_num_of_records,
+    ):
+        final_bayes = BayesianNetwork()
+        # all independent variables should stay the same
         final_bayes.add_nodes_from(new_independent_vars)
         final_bayes.add_cpds(
-            *[reference_bayes.get_cpds(node=node) if node in
-                reference_bayes.nodes else second_bayes.get_cpds(node=node)
-                for node in new_independent_vars])
+            *[
+                (
+                    reference_bayes.get_cpds(node=node)
+                    if node in reference_bayes.nodes
+                    else second_bayes.get_cpds(node=node)
+                )
+                for node in new_independent_vars
+            ]
+        )
         for node in new_dependent_vars:
             final_bayes.add_node(node)
             ref_parents = set()
@@ -26,24 +38,29 @@ class BayesNetHelper():
             if node in second_bayes:
                 second_parents = set(second_bayes.get_parents(node))
 
-            if(len(ref_parents) == 0):
-                final_bayes.add_edges_from([(parent, node) for parent in
-                                            second_parents])
+            if len(ref_parents) == 0:
+                final_bayes.add_edges_from(
+                    [(parent, node) for parent in second_parents]
+                )
                 final_bayes.add_cpds(second_bayes.get_cpds(node=node))
             else:
-                final_bayes.add_edges_from([(parent, node) for parent in
-                                            ref_parents])
+                final_bayes.add_edges_from([(parent, node) for parent in ref_parents])
                 if len(second_parents - ref_parents) > 0:
-                    raise ValueError('This join can not be performed since the\
+                    raise ValueError(
+                        "This join can not be performed since the\
                          second distribution contains new independent variable\
                          (s) for node {}. Please consider dropping these new \
-                         dependencies or switching reference distribution. '
-                                     .format(str(node)))
+                         dependencies or switching reference distribution. ".format(
+                            str(node)
+                        )
+                    )
                 elif ref_parents == second_parents:
                     new_cpd = BayesNetHelper.calculate_weighted_cpds(
                         reference_bayes.get_cpds(node=node),
                         second_bayes.get_cpds(node=node),
-                        ref_num_of_records, second_num_of_records)
+                        ref_num_of_records,
+                        second_num_of_records,
+                    )
                     final_bayes.add_cpds(new_cpd)
                 else:
                     final_bayes.add_cpds(reference_bayes.get_cpds(node=node))
@@ -58,7 +75,7 @@ class BayesNetHelper():
 
     @staticmethod
     def single_bayes_net(df, independent_vars, dependent_vars):
-        model = BayesianModel()
+        model = BayesianNetwork()
         model.add_nodes_from(independent_vars)
         for independent_var in independent_vars:
             for dependent_var in dependent_vars:
@@ -67,16 +84,16 @@ class BayesNetHelper():
         return model
 
     @staticmethod
-    def bayes_net_from_populational_data(data, independent_vars,
-                                         dependent_vars):
-        model = BayesianModel()
+    def bayes_net_from_populational_data(data, independent_vars, dependent_vars):
+        model = BayesianNetwork()
         model.add_nodes_from(independent_vars)
         for independent_var in independent_vars:
             for dependent_var in dependent_vars:
                 model.add_edge(independent_var, dependent_var)
         cpd_list = []
         state_names = BayesNetHelper.get_state_names_from_df(
-            data, independent_vars | dependent_vars)
+            data, independent_vars | dependent_vars
+        )
         for node in independent_vars | dependent_vars:
             cpd = BayesNetHelper.compute_cpd(model, node, data, state_names)
             cpd_list.append(cpd)
@@ -92,31 +109,28 @@ class BayesNetHelper():
 
     @staticmethod
     def compute_cpd(model, node, data, state_names):
-        # this is a similar function to pgmpy BayesianModel.fit()
+        # this is a similar function to pgmpy BayesianNetwork.fit()
         # https://github.com/pgmpy/pgmpy
         node_cardinality = len(state_names[node])
         state_name = {node: state_names[node]}
         parents = sorted(model.get_parents(node))
-        parents_cardinalities = [len(state_names[parent])
-                                 for parent in parents]
-        #get values
-        #print('data')
-        #print(data)
+        parents_cardinalities = [len(state_names[parent]) for parent in parents]
+        # get values
+        # print('data')
+        # print(data)
         if parents:
-            state_name.update({parent: state_names[parent]
-                              for parent in parents})
-            #get values
+            state_name.update({parent: state_names[parent] for parent in parents})
+            # get values
             parents_states = [state_names[parent] for parent in parents]
-            state_value_data = data.groupby(
-                [node] + parents).sum().unstack(parents)
-            #drop 'counts'
+            state_value_data = data.groupby([node] + parents).sum().unstack(parents)
+            # drop 'counts'
             state_value_data = state_value_data.droplevel(0, axis=1)
             row_index = state_names[node]
-            if(len(parents) > 1):
-                column_index = pd.MultiIndex.from_product(
-                    parents_states, names=parents)
+            if len(parents) > 1:
+                column_index = pd.MultiIndex.from_product(parents_states, names=parents)
                 state_values = state_value_data.reindex(
-                    index=row_index, columns=column_index)
+                    index=row_index, columns=column_index
+                )
             state_values = state_value_data
         else:
             state_value_data = data.groupby([node]).sum()
@@ -137,25 +151,25 @@ class BayesNetHelper():
         bayes_net_infer = VariableElimination(bayes_net)
         if evidence_vars:
             q = bayes_net_infer.query(
-                variables=query_vars, evidence=evidence_vars,
-                show_progress=False)
+                variables=query_vars, evidence=evidence_vars, show_progress=False
+            )
         else:
             q = bayes_net_infer.query(
-                variables=query_vars, evidence=None,
-                show_progress=False)
+                variables=query_vars, evidence=None, show_progress=False
+            )
         return BayesNetHelper.convertFactorToDF(q)
-    
+
     @staticmethod
     def map_query(bayes_net, query_vars, evidence_vars):
         bayes_net_infer = VariableElimination(bayes_net)
         if evidence_vars:
             q = bayes_net_infer.map_query(
-                variables=query_vars, evidence=evidence_vars,
-                show_progress=False)
+                variables=query_vars, evidence=evidence_vars, show_progress=False
+            )
         else:
             q = bayes_net_infer.map_query(
-                variables=query_vars, evidence=None,
-                show_progress=False)
+                variables=query_vars, evidence=None, show_progress=False
+            )
         return q
 
     @staticmethod
@@ -164,7 +178,7 @@ class BayesNetHelper():
         data = []
         for line in a:
             row = []
-            for (_, state_name) in line:
+            for _, state_name in line:
                 if isinstance(state_name, tuple):
                     row.append(str(state_name))
                 else:
@@ -172,16 +186,15 @@ class BayesNetHelper():
             data.append(row)
         data = np.hstack((np.array(data), np.array(phi.values.reshape(-1, 1))))
         header = phi.scope().copy()
-        header.append("Probability({variables})".format(variables=","
-                      .join(header)))
+        header.append("Probability({variables})".format(variables=",".join(header)))
         df = pd.DataFrame(columns=header, data=data)
-        df[header[-1]] = df[header[-1]].astype('float')
+        df[header[-1]] = df[header[-1]].astype("float")
         return df
 
     @staticmethod
     def removeRelatedCpds(bayes_net, mismatchColumn):
-        #remove all cpds related to the mismatch variable and then
-        #re-assign them
+        # remove all cpds related to the mismatch variable and then
+        # re-assign them
         bayes_net_copy = bayes_net.copy()
         cpd_node = bayes_net_copy.get_cpds(node=mismatchColumn)
         bayes_net_copy.remove_cpds(cpd_node)
@@ -198,34 +211,39 @@ class BayesNetHelper():
             if len(evidences) > 1:
                 if evidences[0] != mismatchColumn:
                     evidences.remove(mismatchColumn)
-                    evidences = [mismatchColumn]+evidences
+                    evidences = [mismatchColumn] + evidences
                     old_cpd.reorder_parents(evidences)
             c_node_card = old_cpd.variable_card
             new_cpd_array = np.empty(shape=[c_node_card, 0])
 
-            old_cpd_array = np.array(
-                old_cpd.values).flatten('C').reshape((c_node_card, -1))
+            old_cpd_array = (
+                np.array(old_cpd.values).flatten("C").reshape((c_node_card, -1))
+            )
             index = 0
-            mismatch_col_card = np.sum(
-                [len(mapping[i]) for i in mapping.keys()])
+            mismatch_col_card = np.sum([len(mapping[i]) for i in mapping.keys()])
             for _ in range(np.prod(old_cpd.cardinality[2:])):
                 for old_entry, new_entries in mapping.items():
                     num_of_sub_entries = len(new_entries)
                     # mismatch_col_card += num_of_sub_entries
                     v = old_cpd_array[:, index]
-                    #if 1-d, reshape
+                    # if 1-d, reshape
                     if len(v.shape) == 1:
                         v = v.reshape(-1, 1)
                     for _ in range(0, num_of_sub_entries):
                         new_cpd_array = np.hstack((new_cpd_array, v))
                     index += 1
-            evidence_cards = [mismatch_col_card] + list(
-                old_cpd.cardinality[2:])
+            evidence_cards = [mismatch_col_card] + list(old_cpd.cardinality[2:])
             new_state_names = old_cpd.state_names.copy()
-            new_state_names.update(bayes_net_copy.get_cpds(
-                node=mismatchColumn).state_names)
-            cpd = TabularCPD(c_node, c_node_card, new_cpd_array,
-                             evidence=evidences, evidence_card=evidence_cards,
-                             state_names=new_state_names)
+            new_state_names.update(
+                bayes_net_copy.get_cpds(node=mismatchColumn).state_names
+            )
+            cpd = TabularCPD(
+                c_node,
+                c_node_card,
+                new_cpd_array,
+                evidence=evidences,
+                evidence_card=evidence_cards,
+                state_names=new_state_names,
+            )
             bayes_net_copy.add_cpds(cpd)
         return bayes_net_copy

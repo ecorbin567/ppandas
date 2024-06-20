@@ -2,7 +2,7 @@ import intervals as I
 import numpy as np
 
 
-class IntervalHelper():
+class IntervalHelper:
 
     @staticmethod
     def computeNewIntervals(intervals1, intervals2):
@@ -37,7 +37,7 @@ class IntervalHelper():
         mapping = {}
         for iv_old in old_intervals:
             mapping[iv_old] = []
-            for iv_new in newintervals:
+            for iv_new in new_intervals:
                 if iv_new in iv_old:
                     mapping[iv_old].append(iv_new)
         return mapping
@@ -49,20 +49,22 @@ class IntervalHelper():
             mapping[I.to_string(iv_old, conv=int)] = []
             for iv_new in new_intervals:
                 if iv_new in iv_old:
-                    mapping[I.to_string(iv_old, conv=int)]\
-                        .append(I.to_string(iv_new, conv=int))
+                    mapping[I.to_string(iv_old, conv=int)].append(
+                        I.to_string(iv_new, conv=int)
+                    )
         return mapping
 
     @staticmethod
     def convertMappingFromString(mapping):
         new_mapping = {}
         for iv_old, iv_news in mapping.items():
-            new_mapping[I.from_string(iv_old, conv=int)] =\
+            new_mapping[I.from_string(iv_old, conv=int)] = (
                 IntervalHelper.getIntervalsFromString(iv_news)
+            )
         return new_mapping
 
     @staticmethod
     def getUniformDistribution(iv_old, iv_news, value):
         size = [iv_new.upper - iv_new.lower for iv_new in iv_news]
-        size_portion = size/np.sum(size)
-        return size_portion*value
+        size_portion = size / np.sum(size)
+        return size_portion * value

@@ -14,14 +14,17 @@ Use cases in this article are implemented in [experiments](https://github.com/D3
 ## Prerequisites
 
 This package requires the user to install pgmpy 0.1.9, networkx 2.4, matplotlib, python-interval, geopandas, geovoronoi.
-
+Python 2.7.17
 ```
-pip install pgmpy==0.1.9
-pip install networkx==2.4
-pip install matplotlib
-pip install python-interval
-pip install geopandas
-pip install geovoronoi
+pip install pgmpy
+pip install geovoronoi;
+conda install numpy;
+pip install networkx;
+pip install matplotlib;
+pip install python-intervals;
+pip install geopandas;
+pip install descartes;
+
 ```
 
 ## Installing ppandas
