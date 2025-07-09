@@ -1,12 +1,91 @@
-import matplotlib.pyplot as plt
-import networkx as nx
 import pandas as pd
-from pgmpy.models import BayesianModel
-from ppandas.helper.bayes_net_helper import BayesNetHelper
-from ppandas.helper.interval_helper import IntervalHelper
-from ppandas.helper.query_helper import QueryHelper
-from ppandas.mismatch_handler import\
+import numpy as np
+import ast
+from shapely.geometry import Point
+from pgmpy.factors.discrete import TabularCPD
+from pgmpy.models import DiscreteBayesianNetwork
+from helper.bayes_net_helper import BayesNetHelper
+from helper.query_helper import QueryHelper
+from mismatch_handler import\
     NumericalHandler, categoricalHandler, spatialHandler
+
+# Well-Known Text (WKT) converters so that all the mapping works as expected
+
+def convert_location_states_to_wkt(bayes_net, node='Location'):
+    cpd = bayes_net.get_cpds(node)
+    original_states = cpd.state_names[node] if cpd.state_names else []
+
+    # Convert tuple states to WKT strings
+    new_states = []
+    for st in original_states:
+        if isinstance(st, tuple):
+            new_states.append(Point(st).wkt)
+        else:
+            # Try to parse string tuple like '(0.5, 0.5)'
+            try:
+                val = ast.literal_eval(st)
+                if isinstance(val, tuple) and len(val) == 2:
+                    new_states.append(Point(val).wkt)
+                else:
+                    new_states.append(st)
+            except Exception:
+                new_states.append(st)
+
+    # Only rebuild CPD if there's a change
+    if new_states != original_states:
+        # Set new state names
+        new_state_names = cpd.state_names.copy() if cpd.state_names else {}
+        new_state_names[node] = new_states
+
+        # Determine evidence and evidence_card
+        evidence = cpd.get_evidence()
+        if evidence is not None and cpd.state_names is not None:
+            evidence_card = [len(cpd.state_names[ev]) for ev in evidence]
+        else:
+            evidence_card = None
+
+        # Convert values to expected shape
+        values = np.array(cpd.values)
+        if evidence_card:
+            expected_shape = (cpd.variable_card, int(np.prod(evidence_card)))
+        else:
+            expected_shape = (cpd.variable_card, 1)
+
+        if values.shape != expected_shape:
+            values = values.reshape(expected_shape)
+
+        # Build new CPD with or without evidence_card depending on evidence
+        if evidence is not None and cpd.state_names is not None:
+            new_cpd = TabularCPD(
+                variable=cpd.variable,
+                variable_card=cpd.variable_card,
+                values=values,
+                evidence=evidence,
+                evidence_card=evidence_card,
+                state_names=new_state_names
+            )
+        else:
+            new_cpd = TabularCPD(
+                variable=cpd.variable,
+                variable_card=cpd.variable_card,
+                values=values,
+                state_names=new_state_names
+            )
+
+        bayes_net.remove_cpds(cpd)
+        bayes_net.add_cpds(new_cpd)
+
+
+def convert_geo_dict_keys_and_values_to_wkt(mapping):
+    new_mapping = {}
+    for k, v_list in mapping.items():
+        k_wkt = Point(k).wkt if isinstance(k, tuple) else k
+        new_v_list = [
+            Point(v).wkt if isinstance(v, tuple) else v
+            for v in v_list
+        ]
+        new_mapping[k_wkt] = new_v_list
+    return new_mapping
 
 
 class PDataFrame():
@@ -37,7 +116,7 @@ class PDataFrame():
                                  self.dependent_vars)
             self.atomic = True
 
-        elif isinstance(data, BayesianModel):
+        elif isinstance(data, DiscreteBayesianNetwork):
             self.num_of_records = kwargs['num_of_records']
             self.independent_vars = independent_vars
             self.dependent_vars = kwargs['dependent_vars']
@@ -99,31 +178,24 @@ class PDataFrame():
                     raise ValueError("Only mismatches across independent\
                      variables can be handled.")
                 elif mType == 'numerical':
-                    # todo: implement numerical mismatch
                     handler = NumericalHandler(mNode)
                 elif mType == 'categorical':
-                    # todo: implement categorical mismatch
                     handler = categoricalHandler(mNode)
                 elif mType == 'spatial':
-                    # todo: implement spatial mismatch
                     handler = spatialHandler(mNode)
                 else:
                     raise ValueError("mismatch type {} is currently not \
                         supported".format(mType))
-                # update Query Mapping, a dictionary of dictionary
-                #ref_mapping is a list of dictionaries
+                convert_location_states_to_wkt(reference_bayes, node=mNode)
+                convert_location_states_to_wkt(second_bayes, node=mNode)
                 ref_mapping, sec_mapping = handler.computeMapping(
                     reference_bayes, second_bayes)
-                #print("len ref mapping")
-                #print(len(ref_mapping))
-                #print(sec_mapping)
-                #print("inside p_frame")
+                ref_mapping = convert_geo_dict_keys_and_values_to_wkt(ref_mapping)
+                sec_mapping = convert_geo_dict_keys_and_values_to_wkt(sec_mapping)
                 reference_mapping[mNode] = ref_mapping
                 second_mapping[mNode] = sec_mapping
-                # update the bayes net to be joined
                 reference_bayes = handler.replaceMismatchNode(
                     reference_bayes, ref_mapping)
-                # plt.show()
                 second_bayes = handler.replaceMismatchNode(
                     second_bayes, sec_mapping)
 
@@ -175,14 +247,12 @@ class PDataFrame():
             test_row_evidence_dict = {}
             for evidence_var in valid_evidence_vars:
                 test_row_evidence_dict[evidence_var] = row[evidence_var]
-            #print(test_row_evidence_dict.items())
             test_row_query_df = self.query(query_var,test_row_evidence_dict)
             test_df.loc[index,query_var[0]] = self.parseQuery(query_var[0],
                                                 test_row_query_df,
                                                 probability_column_name,
                                                 query_var_state)
             if index > 1 and index % 1000 == 0 :
-                #print(index)
                 break
         return test_df
     #Returns a state value or a real-valued probability for a given state
@@ -201,11 +271,34 @@ class PDataFrame():
         
     
     def visualise(self, output_file=None, show_tables=False):
-        nx.draw(self.bayes_net, with_labels=True)
-        plt.show()
-        if show_tables:
-            for var in self.bayes_net.nodes():
-                print(self.bayes_net.get_cpds(var))
+        import matplotlib.pyplot as plt
+        import networkx as nx
+        import numpy as np
+
+        plt.figure(figsize=(8, 6))
+        plt.clf()
+
+        try:
+            pos = nx.circular_layout(self.bayes_net)
+            for node, coord in pos.items():
+                if any(np.isnan(coord)) or any(np.isinf(coord)):
+                    print(f"Invalid position for node {node}: {coord}")
+
+            nx.draw(self.bayes_net, pos=pos, with_labels=True,
+                    node_color='skyblue', node_size=2000, arrows=True)
+
+        except Exception as e:
+            print(f"Exception during network drawing: {e}")
+
         if output_file:
-            plt.savefig(output_file+'.png')
-        pass
+            plt.savefig(output_file + '.png')
+        plt.show()
+
+        if show_tables:
+            print("=== CPDs ===")
+            for var in self.bayes_net.nodes():
+                cpd = self.bayes_net.get_cpds(var)
+                if cpd is not None:
+                    print(cpd)
+                else:
+                    print(f"No CPD found for: {var}")

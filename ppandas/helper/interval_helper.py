@@ -1,7 +1,6 @@
 import intervals as I
 import numpy as np
 
-
 class IntervalHelper():
 
     @staticmethod
@@ -37,7 +36,7 @@ class IntervalHelper():
         mapping = {}
         for iv_old in old_intervals:
             mapping[iv_old] = []
-            for iv_new in newintervals:
+            for iv_new in new_intervals:
                 if iv_new in iv_old:
                     mapping[iv_old].append(iv_new)
         return mapping
