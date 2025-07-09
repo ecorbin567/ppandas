@@ -1,4 +1,5 @@
-from pgmpy.models import BayesianModel
+from pgmpy.models import DiscreteBayesianNetwork
+from pgmpy.estimators import BayesianEstimator
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.inference import VariableElimination
 import numpy as np
@@ -10,7 +11,7 @@ class BayesNetHelper():
     @staticmethod
     def join(reference_bayes, second_bayes, new_dependent_vars,
              new_independent_vars, ref_num_of_records, second_num_of_records):
-        final_bayes = BayesianModel()
+        final_bayes = DiscreteBayesianNetwork()
         #all independent variables should stay the same
         final_bayes.add_nodes_from(new_independent_vars)
         final_bayes.add_cpds(
@@ -58,18 +59,35 @@ class BayesNetHelper():
 
     @staticmethod
     def single_bayes_net(df, independent_vars, dependent_vars):
-        model = BayesianModel()
-        model.add_nodes_from(independent_vars)
+        df = df.copy().astype(str)
+        model = DiscreteBayesianNetwork()
+        model.add_nodes_from(independent_vars | dependent_vars)
         for independent_var in independent_vars:
             for dependent_var in dependent_vars:
                 model.add_edge(independent_var, dependent_var)
-        model.fit(df)
+
+        model.fit(df, estimator=BayesianEstimator, prior_type="BDeu")
+
+        # Manually add CPDs for any independent vars that are missing
+        for var in independent_vars:
+            if model.get_cpds(var) is None:
+                state_names = sorted(df[var].unique())
+                counts = df[var].value_counts().reindex(state_names, fill_value=0)
+                probs = (counts / counts.sum()).values
+                cpd = TabularCPD(
+                    variable=var,
+                    variable_card=len(state_names),
+                    values=np.array(probs).reshape(-1, 1),
+                    state_names={var: state_names},
+                )
+                model.add_cpds(cpd)
+
         return model
 
     @staticmethod
     def bayes_net_from_populational_data(data, independent_vars,
                                          dependent_vars):
-        model = BayesianModel()
+        model = DiscreteBayesianNetwork()
         model.add_nodes_from(independent_vars)
         for independent_var in independent_vars:
             for dependent_var in dependent_vars:
@@ -92,16 +110,13 @@ class BayesNetHelper():
 
     @staticmethod
     def compute_cpd(model, node, data, state_names):
-        # this is a similar function to pgmpy BayesianModel.fit()
+        # this is a similar function to pgmpy DiscreteBayesianNetwork.fit()
         # https://github.com/pgmpy/pgmpy
         node_cardinality = len(state_names[node])
         state_name = {node: state_names[node]}
         parents = sorted(model.get_parents(node))
         parents_cardinalities = [len(state_names[parent])
                                  for parent in parents]
-        #get values
-        #print('data')
-        #print(data)
         if parents:
             state_name.update({parent: state_names[parent]
                               for parent in parents})
@@ -191,7 +206,7 @@ class BayesNetHelper():
         return bayes_net_copy
 
     @staticmethod
-    def mapCondtionalCpd(bayes_net, bayes_net_copy, mapping, mismatchColumn):
+    def mapConditionalCpd(bayes_net, bayes_net_copy, mapping, mismatchColumn):
         for c_node in bayes_net_copy.get_children(node=mismatchColumn):
             old_cpd = bayes_net.get_cpds(node=c_node)
             evidences = old_cpd.variables[1:]

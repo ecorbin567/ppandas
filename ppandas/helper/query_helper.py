@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
-from ppandas.helper.bayes_net_helper import BayesNetHelper
-
+from helper.bayes_net_helper import BayesNetHelper
 
 class QueryHelper():
     def __init__(self, mapping):
@@ -88,7 +87,7 @@ class QueryHelper():
     def performExpandedQueries(self, bayes_net,
                                query_vars, list_of_new_evidence_vars):
         df_res = None
-        # evidenve1  |  evidence 2  |....  | P()
+        # evidence1  |  evidence 2  |....  | P()
         #----------- | ------------ |....  | ---
         df_evidence_probability = BayesNetHelper.query(
             bayes_net, list_of_new_evidence_vars[0].keys(),
@@ -98,23 +97,20 @@ class QueryHelper():
                 # P(query|evidence1,evidence2...)* P(evidence1,evidence2...)
                 df_res = BayesNetHelper.query(
                     bayes_net, query_vars, evidence_vars)
-                # print(evidence_vars)
-                # print('---------- df res (1st query)---------')
-                # print(df_res)
-                y = df_res.iloc[:, -1].values.astype(np.float)\
+                y = df_res.iloc[:, -1].values.astype(float)\
                     * self.get_probability_of_evidences(
                         df_evidence_probability, evidence_vars)
                 df_res.iloc[:, -1] = y
             else:
                 df_new = BayesNetHelper.query(
                     bayes_net, query_vars, evidence_vars)
-                y = df_new.iloc[:, -1].values.astype(np.float)\
+                y = df_new.iloc[:, -1].values.astype(float)\
                     * self.get_probability_of_evidences(
                         df_evidence_probability, evidence_vars)
                 df_new.iloc[:, -1] = y
-                df_res = df_res.append(df_new, ignore_index=True)
+                df_res = pd.concat([df_res, df_new], ignore_index=True)
         #normalize third column of df_res
-        y = df_res.iloc[:, -1].values.astype(np.float)
+        y = df_res.iloc[:, -1].values.astype(float)
         df_res.iloc[:, -1] = y/np.sum(y)
         return df_res
 
