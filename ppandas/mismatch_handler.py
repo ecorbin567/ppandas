@@ -1,8 +1,8 @@
 import numpy as np
 import ast
-from helper.bayes_net_helper import BayesNetHelper
-from helper.interval_helper import IntervalHelper
-from helper.spatial_helper import SpatialHelper
+from .helper.bayes_net_helper import BayesNetHelper
+from .helper.interval_helper import IntervalHelper
+from .helper.spatial_helper import SpatialHelper
 from pgmpy.factors.discrete import TabularCPD
 from shapely.ops import unary_union
 from geovoronoi import voronoi_regions_from_coords
