@@ -4,9 +4,9 @@ import ast
 from shapely.geometry import Point
 from pgmpy.factors.discrete import TabularCPD
 from pgmpy.models import DiscreteBayesianNetwork
-from helper.bayes_net_helper import BayesNetHelper
-from helper.query_helper import QueryHelper
-from mismatch_handler import\
+from .helper.bayes_net_helper import BayesNetHelper
+from .helper.query_helper import QueryHelper
+from .mismatch_handler import\
     NumericalHandler, categoricalHandler, spatialHandler
 
 # Well-Known Text (WKT) converters so that all the mapping works as expected
