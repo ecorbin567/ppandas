@@ -93,7 +93,6 @@ class categoricalHandler(MismatchHandler):
         new_state_names = {self.node: new_state_names}
         new_values_array = np.array(new_values).reshape(new_card, 1)
         new_cpd = TabularCPD(self.node, new_card, new_values_array, state_names=new_state_names)
-        print(new_state_names)
         return new_cpd
 
     def getUniformDistribution(self, cardinality, value):
