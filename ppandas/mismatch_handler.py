@@ -38,7 +38,7 @@ class MismatchHandler():
         ref_entries, sec_entries, new_entries = self.computeCrossProduct(
             reference_old_entries, second_old_entries
         )
-        # here, mapping is reperesented in strings
+        # here, mapping is represented in strings
         # for example, mapping = {'[20,50]':['[20,40]','[40,50]'],
         # '[50,80]':['[50,60]','[60,80]']}
         ref_entries_wkt = [ensure_wkt_point(e) if isinstance(e, str) else Point(e).wkt for e in ref_entries]
@@ -51,11 +51,16 @@ class MismatchHandler():
         return reference_mapping, second_mapping
 
     def replaceMismatchNode(self, bayes_net, mapping):
-        # for intervals, convert string representation to intervals first
+        # Remove all related CPDs
         bayes_net_copy = BayesNetHelper.removeRelatedCpds(bayes_net, self.node)
-        bayes_net_copy.add_cpds(self.computeParentCpd(bayes_net, mapping))
-        bayes_net_copy = BayesNetHelper.mapConditionalCpd(
-            bayes_net, bayes_net_copy, mapping, self.node)
+        # Add new parent CPD
+        new_parent_cpd = self.computeParentCpd(bayes_net, mapping)
+        bayes_net_copy.add_cpds(new_parent_cpd)
+        # Synchronize state names for the mismatch variable
+        canonical_state_names = new_parent_cpd.state_names[self.node]
+        # For categorical cross-product, rebuild child CPDs using robust method
+        bayes_net_copy = BayesNetHelper.rebuild_categorical_child_cpds(
+            bayes_net, bayes_net_copy, mapping, self.node, canonical_state_names=canonical_state_names)
         return bayes_net_copy
 
 
