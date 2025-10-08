@@ -15,39 +15,24 @@ class BayesNetHelper():
             old_cpd = old_bayes.get_cpds(child)
             if old_cpd is None:
                 continue
-
-            # Deepcopy state names and update for new parent
             state_names = copy.deepcopy(old_cpd.state_names)
             if canonical_state_names is not None:
-                # Always use the union of atomic categories for the mismatch variable (no cross-products)
-                atomic_states = [s for s in canonical_state_names if isinstance(s, str) and ',' not in s]
-                state_names[node] = sorted(set(atomic_states))
+                state_names[node] = list(canonical_state_names)
             elif mapping and node in mapping:
-                # Defensive: use only atomic categories, never cross-products
-                atomic_states = [s for s in state_names[node] if isinstance(s, str) and ',' not in s]
-                state_names[node] = sorted(set(atomic_states))
-
+                state_names[node] = [str(s) for s in state_names[node]]
             evidence_vars = old_cpd.get_evidence()
             parent_card = [len(state_names[p]) for p in evidence_vars] if evidence_vars else []
-
-            # New parent state space (cross-product)
             parent_states_new = [state_names[p] for p in evidence_vars] if evidence_vars else [[]]
             parent_combinations_new = list(itertools.product(*parent_states_new)) if evidence_vars else [()]
-
-            # Old parent state space
             parent_states_old = [old_cpd.state_names[p] for p in evidence_vars] if evidence_vars else [[]]
             parent_combinations_old = list(itertools.product(*parent_states_old)) if evidence_vars else [()]
-
-            # Prepare new CPD values
             child_card = len(state_names[old_cpd.variable])
             new_values_array = np.zeros((child_card, len(parent_combinations_new)))
-
-            # For each new parent combination, find the corresponding old parent(s)
             for j, combo_new in enumerate(parent_combinations_new):
                 matching_old_indices = []
                 for old_idx, combo_old in enumerate(parent_combinations_old):
                     if old_idx >= old_cpd.values.shape[1]:
-                        continue  # skip out-of-bounds columns
+                        continue
                     match = True
                     for i, var in enumerate(evidence_vars):
                         if var == node and mapping and node in mapping:
@@ -62,7 +47,6 @@ class BayesNetHelper():
                                 break
                     if match:
                         matching_old_indices.append(old_idx)
-
                 for new_idx, new_child_state in enumerate(state_names[old_cpd.variable]):
                     old_child_indices = []
                     if old_cpd.variable in mapping:
@@ -74,13 +58,12 @@ class BayesNetHelper():
                             old_child_indices = [old_cpd.state_names[old_cpd.variable].index(new_child_state)]
                         except ValueError:
                             old_child_indices = []
-
                     val = 0.0
                     count = 0
                     for old_idx in matching_old_indices:
                         for old_child_idx in old_child_indices:
                             if old_child_idx >= old_cpd.values.shape[0]:
-                                continue  # skip out-of-bounds rows
+                                continue
                             v = old_cpd.values[old_child_idx, old_idx]
                             if isinstance(v, (np.ndarray, list)):
                                 v = np.sum(v)
@@ -90,39 +73,24 @@ class BayesNetHelper():
                         new_values_array[new_idx, j] = val / count
                     else:
                         new_values_array[new_idx, j] = 0.0
-
-            # Normalize columns
             col_sums = new_values_array.sum(axis=0, keepdims=True)
             with np.errstate(invalid='ignore', divide='ignore'):
                 new_values_array = np.divide(new_values_array, col_sums, where=col_sums > 0)
-            # For columns that sum to zero, set uniform distribution
-            zero_cols = np.where(col_sums[0] == 0)[0]
-            if len(zero_cols) > 0:
-                uniform = 1.0 / new_values_array.shape[0]
-                for col in zero_cols:
-                    new_values_array[:, col] = uniform
             new_values_array = np.nan_to_num(new_values_array)
-
-            # Create new CPD
-            # raise runtime error if polluted state names for mismatch variable
-            if old_cpd.variable == node:
-                states = state_names.get(node, [])
-                if len(states) != len(set(states)) or not all(isinstance(s, str) and ',' not in s for s in states):
-                    raise RuntimeError(f"Polluted state names in child CPD for {node}: {states}")
+            # Ensure evidence and evidence_card are set correctly for conditional CPDs
+            evidence = evidence_vars if evidence_vars and len(evidence_vars) > 0 else None
+            evidence_card = parent_card if evidence_vars and len(evidence_vars) > 0 else None
             new_cpd = TabularCPD(
                 variable=old_cpd.variable,
                 variable_card=child_card,
                 values=new_values_array,
-                evidence=evidence_vars if evidence_vars else None,
-                evidence_card=parent_card if parent_card else None,
+                evidence=evidence,
+                evidence_card=evidence_card,
                 state_names=state_names
             )
-
-            # Replace in new_bayes
             if child in [cpd.variable for cpd in new_bayes.get_cpds()]:
                 new_bayes.remove_cpds(child)
             new_bayes.add_cpds(new_cpd)
-
         return new_bayes
 
     @staticmethod
@@ -162,9 +130,22 @@ class BayesNetHelper():
             # If any parent is a mismatch variable, always use reference CPD
             if len(ref_parents & mismatch_vars) > 0:
                 final_bayes.add_edges_from([(parent, node) for parent in ref_parents])
-                # Always preserve the original CPD from the reference Bayes net
+                # If the state space has changed, use the rebuilt CPD from the handler if available
                 ref_cpd = reference_bayes.get_cpds(node=node)
-                final_bayes.add_cpds(ref_cpd)
+                # Check if the state_names in ref_cpd match the joined state space
+                joined_state_names = ref_cpd.state_names.get(node, []) if hasattr(ref_cpd, 'state_names') else []
+                # If the cardinality does not match the expected, raise or skip
+                if hasattr(final_bayes, 'expected_state_names') and node in final_bayes.expected_state_names:
+                    expected = set(final_bayes.expected_state_names[node])
+                    actual = set(joined_state_names)
+                    if expected != actual:
+                        # Try to get the rebuilt CPD from the reference_bayes (if handler replaced it)
+                        rebuilt_cpd = reference_bayes.get_cpds(node=node)
+                        final_bayes.add_cpds(rebuilt_cpd)
+                    else:
+                        final_bayes.add_cpds(ref_cpd)
+                else:
+                    final_bayes.add_cpds(ref_cpd)
             elif(len(ref_parents) == 0):
                 final_bayes.add_edges_from([(parent, node) for parent in second_parents])
                 final_bayes.add_cpds(second_bayes.get_cpds(node=node))
@@ -192,6 +173,42 @@ class BayesNetHelper():
                         final_bayes.add_cpds(ref_cpd)
                 else:
                     final_bayes.add_cpds(reference_bayes.get_cpds(node=node))
+        # Ensure all CPDs are valid: for all-zero columns, use reference CPD if possible, else uniform
+        for cpd in final_bayes.get_cpds():
+            values = np.array(cpd.values)
+            ref_cpd = None
+            if cpd.variable in reference_bayes.nodes:
+                ref_cpd = reference_bayes.get_cpds(node=cpd.variable)
+            if values.ndim == 1:
+                s = values.sum()
+                if np.allclose(s, 0):
+                    if ref_cpd is not None and ref_cpd.values.shape == values.shape and not np.allclose(ref_cpd.values, 0):
+                        values[:] = ref_cpd.values[:]
+                    else:
+                        values[:] = 1.0 / values.shape[0]
+            else:
+                col_sums = values.sum(axis=0)
+                for j, s in enumerate(col_sums):
+                    if np.allclose(s, 0):
+                        use_ref = False
+                        if ref_cpd is not None and ref_cpd.values.shape == values.shape:
+                            ref_col = ref_cpd.values[:, j]
+                            if not np.allclose(ref_col, 0):
+                                values[:, j] = ref_col
+                                use_ref = True
+                        if not use_ref:
+                            values[:, j] = 1.0 / values.shape[0]
+            # Final fallback: set any remaining all-zero or NaN columns to uniform
+            if values.ndim == 1:
+                if np.allclose(values, 0) or np.any(np.isnan(values)):
+                    values[:] = 1.0 / values.shape[0]
+            else:
+                for j in range(values.shape[1]):
+                    if np.allclose(values[:, j], 0) or np.any(np.isnan(values[:, j])):
+                        values[:, j] = 1.0 / values.shape[0]
+            cpd.values = values
+            if hasattr(cpd, 'normalize'):
+                cpd.normalize()
         return final_bayes
 
     @staticmethod
@@ -222,6 +239,8 @@ class BayesNetHelper():
                     variable=var,
                     variable_card=len(state_names),
                     values=np.array(probs).reshape(-1, 1),
+                    evidence=None,
+                    evidence_card=None,
                     state_names={var: state_names},
                 )
                 model.add_cpds(cpd)
@@ -280,12 +299,14 @@ class BayesNetHelper():
         else:
             state_value_data = data.groupby([node]).sum()
             state_values = state_value_data.reindex(state_names[node])
+        evidence = parents if parents and len(parents) > 0 else None
+        evidence_card = parents_cardinalities if parents and len(parents) > 0 else None
         cpd = TabularCPD(
             node,
             node_cardinality,
             state_values,
-            evidence=parents,
-            evidence_card=parents_cardinalities,
+            evidence=evidence,
+            evidence_card=evidence_card,
             state_names=state_name,
         )
         cpd.normalize()

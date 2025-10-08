@@ -58,7 +58,7 @@ class MismatchHandler():
         bayes_net_copy.add_cpds(new_parent_cpd)
         # Synchronize state names for the mismatch variable
         canonical_state_names = new_parent_cpd.state_names[self.node]
-        # For categorical cross-product, rebuild child CPDs using robust method
+        # Always rebuild all child CPDs to match new cardinality
         bayes_net_copy = BayesNetHelper.rebuild_categorical_child_cpds(
             bayes_net, bayes_net_copy, mapping, self.node, canonical_state_names=canonical_state_names)
         return bayes_net_copy
@@ -83,23 +83,24 @@ class categoricalHandler(MismatchHandler):
 
     def computeParentCpd(self, bayes_net, mapping):
         cpd_node = bayes_net.get_cpds(node=self.node)
-        all_states = set()
-        for s in mapping.keys():
-            if isinstance(s, str) and ',' not in s:
-                all_states.add(s)
-        if cpd_node.state_names and self.node in cpd_node.state_names:
-            for s in cpd_node.state_names[self.node]:
-                if isinstance(s, str) and ',' not in s:
-                    all_states.add(s)
-        new_state_names = sorted(all_states)
-        # Check for pollution
-        if len(new_state_names) != len(set(new_state_names)) or not all(isinstance(s, str) and ',' not in s for s in new_state_names):
-            raise RuntimeError(f"Polluted state names for {self.node}: {new_state_names}")
-        new_card = len(new_state_names)
-        new_values = [1.0 / new_card] * new_card
-        new_state_names_dict = {self.node: new_state_names}
-        new_values_array = np.array(new_values).reshape(new_card, 1)
+        old_states = list(cpd_node.state_names[self.node])
+        new_states = sorted(set(old_states) | set(mapping.keys()))
+        new_card = len(new_states)
+        old_values = np.array(cpd_node.values).flatten()
+        new_values = np.zeros(new_card)
+        for i, s in enumerate(new_states):
+            if s in old_states:
+                idx = old_states.index(s)
+                new_values[i] = old_values[idx]
+            else:
+                new_values[i] = 0.0
+        total = new_values.sum()
+        if total > 0:
+            new_values = new_values / total
+        new_state_names_dict = {self.node: new_states}
+        new_values_array = new_values.reshape(new_card, 1)
         new_cpd = TabularCPD(self.node, new_card, new_values_array, state_names=new_state_names_dict)
+        new_cpd.normalize()
         return new_cpd
 
     def getUniformDistribution(self, cardinality, value):
@@ -109,19 +110,29 @@ class categoricalHandler(MismatchHandler):
 class NumericalHandler(MismatchHandler):
 
     def computeCrossProduct(self, reference_old_entries, second_old_entries):
-        reference_intervals = IntervalHelper.getIntervalsFromString(
-            reference_old_entries)
-        second_intervals = IntervalHelper.getIntervalsFromString(
-            second_old_entries)
-        new_intervals = IntervalHelper.computeNewIntervals(
-            reference_intervals, second_intervals)
-        return IntervalHelper.convertIntervalsToString(
-            reference_intervals), IntervalHelper.convertIntervalsToString(
-                second_intervals), IntervalHelper.convertIntervalsToString(new_intervals)
+        # Convert string intervals to interval objects
+        reference_intervals = IntervalHelper.getIntervalsFromString(reference_old_entries)
+        second_intervals = IntervalHelper.getIntervalsFromString(second_old_entries)
+        new_intervals = IntervalHelper.computeNewIntervals(reference_intervals, second_intervals)
+        return (
+            IntervalHelper.convertIntervalsToString(reference_intervals),
+            IntervalHelper.convertIntervalsToString(second_intervals),
+            IntervalHelper.convertIntervalsToString(new_intervals)
+        )
 
     def replaceMismatchNode(self, bayes_net, mapping):
         i_mapping = IntervalHelper.convertMappingFromString(mapping)
-        return MismatchHandler.replaceMismatchNode(self, bayes_net, i_mapping)
+        # Remove all related CPDs
+        bayes_net_copy = BayesNetHelper.removeRelatedCpds(bayes_net, self.node)
+        # Add new parent CPD
+        new_parent_cpd = self.computeParentCpd(bayes_net, mapping)
+        bayes_net_copy.add_cpds(new_parent_cpd)
+        # Synchronize state names for the mismatch variable
+        canonical_state_names = new_parent_cpd.state_names[self.node]
+        # Always rebuild all child CPDs to match new cardinality (same as categorical)
+        bayes_net_copy = BayesNetHelper.rebuild_categorical_child_cpds(
+            bayes_net, bayes_net_copy, mapping, self.node, canonical_state_names=canonical_state_names)
+        return bayes_net_copy
 
     def computeParentCpd(self, bayes_net, mapping):
         cpd_node = bayes_net.get_cpds(node=self.node)
@@ -131,17 +142,22 @@ class NumericalHandler(MismatchHandler):
         new_state_names = []
         new_card = 0
         for iv_old in cpd_node.state_names[self.node]:
-            iv_news = mapping[IntervalHelper.getIntervalFromString(iv_old)]
-            new_card += len(iv_news)
+            # mapping keys are strings, not interval objects
+            iv_news = mapping[iv_old]
+            # Convert iv_news to interval objects if needed
+            iv_news_objs = IntervalHelper.getIntervalsFromString(iv_news)
+            new_card += len(iv_news_objs)
             new_state_names.extend(
-                IntervalHelper.convertIntervalsToString(iv_news))
+                IntervalHelper.convertIntervalsToString(iv_news_objs))
             new_values.extend(
                 IntervalHelper.getUniformDistribution(
-                    iv_old, iv_news, values[i]))
+                    iv_old, iv_news_objs, values[i]))
             i += 1
         new_state_names = {self.node: new_state_names}
         new_values_array = np.array(new_values).reshape(new_card, 1)
+        # Defensive: always normalize TabularCPD
         new_cpd = TabularCPD(self.node, new_card, new_values_array, state_names=new_state_names)
+        new_cpd.normalize()
         return new_cpd
 
     def getMapping(self, old_intervals, new_intervals):
