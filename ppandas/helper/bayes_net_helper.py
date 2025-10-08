@@ -10,15 +10,6 @@ import itertools
 class BayesNetHelper():
     @staticmethod
     def rebuild_categorical_child_cpds(old_bayes, new_bayes, mapping, node, canonical_state_names=None):
-        """
-        For categorical cross-product mismatches, rebuild CPDs for children of `node`
-        by broadcasting old CPD values over the new parent state space.
-        """
-        import itertools
-        import numpy as np
-        from pgmpy.factors.discrete import TabularCPD
-        import copy
-
         children = old_bayes.get_children(node)
         for child in children:
             old_cpd = old_bayes.get_cpds(child)
@@ -28,9 +19,13 @@ class BayesNetHelper():
             # Deepcopy state names and update for new parent
             state_names = copy.deepcopy(old_cpd.state_names)
             if canonical_state_names is not None:
-                state_names[node] = list(canonical_state_names)
+                # Always use the union of atomic categories for the mismatch variable (no cross-products)
+                atomic_states = [s for s in canonical_state_names if isinstance(s, str) and ',' not in s]
+                state_names[node] = sorted(set(atomic_states))
             elif mapping and node in mapping:
-                state_names[node] = [str(s) for s in state_names[node]]
+                # Defensive: use only atomic categories, never cross-products
+                atomic_states = [s for s in state_names[node] if isinstance(s, str) and ',' not in s]
+                state_names[node] = sorted(set(atomic_states))
 
             evidence_vars = old_cpd.get_evidence()
             parent_card = [len(state_names[p]) for p in evidence_vars] if evidence_vars else []
@@ -109,6 +104,11 @@ class BayesNetHelper():
             new_values_array = np.nan_to_num(new_values_array)
 
             # Create new CPD
+            # raise runtime error if polluted state names for mismatch variable
+            if old_cpd.variable == node:
+                states = state_names.get(node, [])
+                if len(states) != len(set(states)) or not all(isinstance(s, str) and ',' not in s for s in states):
+                    raise RuntimeError(f"Polluted state names in child CPD for {node}: {states}")
             new_cpd = TabularCPD(
                 variable=old_cpd.variable,
                 variable_card=child_card,
@@ -129,7 +129,7 @@ class BayesNetHelper():
     def join(reference_bayes, second_bayes, new_dependent_vars,
              new_independent_vars, ref_num_of_records, second_num_of_records):
         final_bayes = DiscreteBayesianNetwork()
-        #all independent variables should stay the same
+        # all independent variables should stay the same
         final_bayes.add_nodes_from(new_independent_vars)
         final_bayes.add_cpds(
             *[reference_bayes.get_cpds(node=node) if node in
@@ -162,7 +162,9 @@ class BayesNetHelper():
             # If any parent is a mismatch variable, always use reference CPD
             if len(ref_parents & mismatch_vars) > 0:
                 final_bayes.add_edges_from([(parent, node) for parent in ref_parents])
-                final_bayes.add_cpds(reference_bayes.get_cpds(node=node))
+                # Always preserve the original CPD from the reference Bayes net
+                ref_cpd = reference_bayes.get_cpds(node=node)
+                final_bayes.add_cpds(ref_cpd)
             elif(len(ref_parents) == 0):
                 final_bayes.add_edges_from([(parent, node) for parent in second_parents])
                 final_bayes.add_cpds(second_bayes.get_cpds(node=node))
@@ -349,16 +351,6 @@ class BayesNetHelper():
 
     @staticmethod
     def mapConditionalCpd(old_bayes, new_bayes, mapping, node):
-        """
-        Rebuild CPDs in new_bayes for children of `node` using mapping,
-        preserving original conditional probabilities.
-        Handles mismatches in both parent and child states.
-        """
-        import itertools
-        import numpy as np
-        from pgmpy.factors.discrete import TabularCPD
-        import copy
-
         children = old_bayes.get_children(node)
         for child in children:
             old_cpd = old_bayes.get_cpds(child)

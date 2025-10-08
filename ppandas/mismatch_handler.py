@@ -67,37 +67,39 @@ class MismatchHandler():
 class categoricalHandler(MismatchHandler):
 
     def computeCrossProduct(self, reference_old_entries, second_old_entries):
-        new_entries = []
-        for ref_entry in reference_old_entries:
-            for sec_entry in second_old_entries:
-                new_entries.append("{},{}".format(ref_entry, sec_entry))
-        return reference_old_entries, second_old_entries, new_entries
+        # For categorical: new state space is the sorted union of both sets
+        union_entries = sorted(set(reference_old_entries) | set(second_old_entries))
+        return union_entries, union_entries, union_entries
 
     def getMapping(self, old_entries, new_entries):
+        # For categorical: identity mapping for present categories
         mapping = {}
         for old_entry in old_entries:
-            mapping[old_entry] = []
-            for s in new_entries:
-                if old_entry in s:
-                    mapping[old_entry].append(s)
+            if old_entry in new_entries:
+                mapping[old_entry] = [old_entry]
+            else:
+                mapping[old_entry] = []
         return mapping
 
     def computeParentCpd(self, bayes_net, mapping):
         cpd_node = bayes_net.get_cpds(node=self.node)
-        values = cpd_node.values
-        new_values = []
-        new_state_names = []
-        new_card = 0
-        i = 0
-        for old_entry, new_entries in mapping.items():
-            new_card += len(new_entries)
-            new_state_names.extend(new_entries)
-            new_values.extend(
-                self.getUniformDistribution(len(new_entries), values[i]))
-            i += 1
-        new_state_names = {self.node: new_state_names}
+        all_states = set()
+        for s in mapping.keys():
+            if isinstance(s, str) and ',' not in s:
+                all_states.add(s)
+        if cpd_node.state_names and self.node in cpd_node.state_names:
+            for s in cpd_node.state_names[self.node]:
+                if isinstance(s, str) and ',' not in s:
+                    all_states.add(s)
+        new_state_names = sorted(all_states)
+        # Check for pollution
+        if len(new_state_names) != len(set(new_state_names)) or not all(isinstance(s, str) and ',' not in s for s in new_state_names):
+            raise RuntimeError(f"Polluted state names for {self.node}: {new_state_names}")
+        new_card = len(new_state_names)
+        new_values = [1.0 / new_card] * new_card
+        new_state_names_dict = {self.node: new_state_names}
         new_values_array = np.array(new_values).reshape(new_card, 1)
-        new_cpd = TabularCPD(self.node, new_card, new_values_array, state_names=new_state_names)
+        new_cpd = TabularCPD(self.node, new_card, new_values_array, state_names=new_state_names_dict)
         return new_cpd
 
     def getUniformDistribution(self, cardinality, value):
